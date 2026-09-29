@@ -1,0 +1,403 @@
+<template>
+  <div class="page" ontouchstart="onScreenTouch">
+    <div class="content" if="{{ !matchOver }}">
+      <div class="score-zone {{ pressedOpponent ? 'opponent zone-pressed-opponent' : 'opponent' }}"
+           onclick="onOpponentTap"
+           ontouchstart="onOpponentTouchStart"
+           ontouchend="onOpponentTouchEnd">
+        <div class="label-col">
+          <text class="label-char">对</text>
+          <text class="label-char">方</text>
+        </div>
+        <text class="score">{{ opponentScore }}</text>
+      </div>
+
+      <div class="score-zone {{ pressedSelf ? 'self zone-pressed-self' : 'self' }}"
+           onclick="onSelfTap"
+           ontouchstart="onSelfTouchStart"
+           ontouchend="onSelfTouchEnd">
+        <div class="label-col">
+          <text class="label-char">我</text>
+          <text class="label-char">方</text>
+        </div>
+        <text class="score">{{ selfScore }}</text>
+      </div>
+    </div>
+
+    <div class="overlay {{ winner === 'opponent' ? 'bg-opponent' : 'bg-self' }}" if="{{ matchOver }}">
+      <text class="overlay-title">{{ winner === 'opponent' ? '对方胜' : '我方胜' }}</text>
+      <text class="overlay-score">{{ winner === 'opponent' ? opponentScore : selfScore }}:{{ winner === 'opponent' ? selfScore : opponentScore }}</text>
+      <text class="overlay-hint">10秒无操作自动重置</text>
+      <div class="overlay-btn btn-primary" onclick="onRestart">
+        <text class="btn-text-dark">再来一局({{ countdown }}s)</text>
+      </div>
+      <div class="overlay-btn btn-ghost" onclick="onDismiss">
+        <text class="btn-text-light">继续查看</text>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script>
+import { createTapHandler, adjustScore } from '../../common/tapScore'
+import { isGameWon } from '../../common/badminton'
+import vibrator from '@system.vibrator'
+import brightness from '@system.brightness'
+
+const AUTO_RESET_SECONDS = 10
+const DIM_DELAY_MS = 3000
+const DIM_BRIGHTNESS = 30
+
+export default {
+  private: {
+    opponentScore: 0,
+    selfScore: 0,
+    matchOver: false,
+    winner: '',
+    countdown: AUTO_RESET_SECONDS,
+    pressedOpponent: false,
+    pressedSelf: false
+  },
+
+  onInit() {
+    this._opponentTap = createTapHandler(
+      () => {
+        this.opponentScore += 1
+        this._vibrate()
+        this._evaluate()
+      },
+      () => {
+        this.opponentScore = adjustScore(this.opponentScore, -1)
+        this._evaluate()
+      }
+    )
+
+    this._selfTap = createTapHandler(
+      () => {
+        this.selfScore += 1
+        this._vibrate()
+        this._evaluate()
+      },
+      () => {
+        this.selfScore = adjustScore(this.selfScore, -1)
+        this._evaluate()
+      }
+    )
+  },
+
+  onDestroy() {
+    this._clearAutoReset()
+    this._teardownBrightness()
+  },
+
+  onShow() {
+    this._dimmed = false
+    this._savedBrightness = null
+    this._savedMode = null
+    try {
+      brightness.getMode({
+        success: (result) => {
+          this._savedMode = result.mode
+        }
+      })
+      brightness.getValue({
+        success: (result) => {
+          this._savedBrightness = result.value
+        }
+      })
+      // 锁定手动亮度，避免自动亮度覆盖降亮后的值
+      brightness.setMode({ mode: 0 })
+    } catch (error) {
+      // 部分固件不支持亮度模式时静默忽略
+    }
+    try {
+      brightness.setKeepScreenOn({ keepScreenOn: true })
+    } catch (error) {
+      // 部分固件不支持常亮时静默忽略
+    }
+    this._armIdleDim()
+  },
+
+  onHide() {
+    this._teardownBrightness()
+  },
+
+  onScreenTouch() {
+    this._restoreBrightness()
+    this._armIdleDim()
+  },
+
+  onOpponentTap() {
+    // 兜底复位按压态：真机 touchend 偶发丢失时避免卡在按下样式
+    this.pressedOpponent = false
+    this._opponentTap()
+  },
+
+  onSelfTap() {
+    this.pressedSelf = false
+    this._selfTap()
+  },
+
+  onOpponentTouchStart() {
+    this.pressedOpponent = true
+  },
+
+  onOpponentTouchEnd() {
+    this.pressedOpponent = false
+  },
+
+  onSelfTouchStart() {
+    this.pressedSelf = true
+  },
+
+  onSelfTouchEnd() {
+    this.pressedSelf = false
+  },
+
+  onRestart() {
+    this._resetMatch()
+  },
+
+  onDismiss() {
+    this.matchOver = false
+    this._armAutoReset()
+  },
+
+  _evaluate() {
+    if (isGameWon(this.selfScore, this.opponentScore)) {
+      this._endMatch('self')
+    } else if (isGameWon(this.opponentScore, this.selfScore)) {
+      this._endMatch('opponent')
+    } else {
+      this._clearAutoReset()
+    }
+  },
+
+  _endMatch(winner) {
+    this.winner = winner
+    this.matchOver = true
+    this._armAutoReset()
+  },
+
+  _armAutoReset() {
+    this._clearAutoReset()
+    this.countdown = AUTO_RESET_SECONDS
+    this._autoResetTimer = setInterval(() => {
+      this.countdown -= 1
+      if (this.countdown <= 0) {
+        this._resetMatch()
+      }
+    }, 1000)
+  },
+
+  _resetMatch() {
+    this._clearAutoReset()
+    this.matchOver = false
+    this.winner = ''
+    this.countdown = AUTO_RESET_SECONDS
+    this.opponentScore = 0
+    this.selfScore = 0
+    this.pressedOpponent = false
+    this.pressedSelf = false
+  },
+
+  _clearAutoReset() {
+    if (this._autoResetTimer) {
+      clearInterval(this._autoResetTimer)
+      this._autoResetTimer = null
+    }
+  },
+
+  _armIdleDim() {
+    this._clearIdleDim()
+    this._idleTimer = setTimeout(() => {
+      this._idleTimer = null
+      this._dimmed = true
+      this._applyBrightness(DIM_BRIGHTNESS)
+    }, DIM_DELAY_MS)
+  },
+
+  _clearIdleDim() {
+    if (this._idleTimer) {
+      clearTimeout(this._idleTimer)
+      this._idleTimer = null
+    }
+  },
+
+  _restoreBrightness() {
+    if (!this._dimmed) return
+    this._dimmed = false
+    if (this._savedBrightness !== null) {
+      this._applyBrightness(this._savedBrightness)
+    }
+  },
+
+  _applyBrightness(value) {
+    try {
+      brightness.setValue({ value })
+    } catch (error) {
+      // 部分固件不支持亮度调节时静默忽略
+    }
+  },
+
+  _teardownBrightness() {
+    this._clearIdleDim()
+    this._dimmed = false
+    try {
+      brightness.setKeepScreenOn({ keepScreenOn: false })
+      if (this._savedMode !== null) {
+        brightness.setMode({ mode: this._savedMode })
+      }
+      if (this._savedBrightness !== null) {
+        brightness.setValue({ value: this._savedBrightness })
+      }
+    } catch (error) {
+      // 部分固件不支持亮度接口时静默忽略
+    }
+  },
+
+  _vibrate() {
+    try {
+      vibrator.vibrate({ mode: 'short' })
+    } catch (error) {
+      // 部分固件不支持震动时静默忽略
+    }
+  }
+}
+</script>
+
+<style>
+.page {
+  width: 100%;
+  height: 100%;
+  flex-direction: column;
+  background-color: #000000;
+  padding: 12px;
+}
+
+.content {
+  width: 100%;
+  flex: 1;
+  flex-direction: column;
+}
+
+.score-zone {
+  width: 100%;
+  flex: 1;
+  flex-direction: row;
+  align-items: center;
+  border-radius: 16px;
+}
+
+.opponent {
+  background-color: #e53935;
+  margin-bottom: 12px;
+  box-shadow: 0 6px 16px rgba(229, 57, 53, 0.4);
+}
+
+.self {
+  background-color: #1e88e5;
+  box-shadow: 0 6px 16px rgba(30, 136, 229, 0.4);
+}
+
+.zone-pressed-opponent {
+  background-color: #b71c1c;
+}
+
+.zone-pressed-self {
+  background-color: #0d47a1;
+}
+
+.score {
+  flex: 1;
+  text-align: center;
+  font-size: 88px;
+  font-weight: bold;
+  color: #ffffff;
+}
+
+.label-col {
+  width: 42px;
+  height: 100%;
+  margin-left: 6px;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+}
+
+.label-char {
+  font-size: 26px;
+  font-weight: bold;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.overlay {
+  width: 100%;
+  flex: 1;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  border-radius: 16px;
+}
+
+.bg-opponent {
+  background-color: #e53935;
+}
+
+.bg-self {
+  background-color: #1e88e5;
+}
+
+.overlay-title {
+  font-size: 32px;
+  font-weight: bold;
+  color: #ffffff;
+  margin-bottom: 8px;
+}
+
+.overlay-score {
+  max-width: 100%;
+  font-size: 56px;
+  font-weight: bold;
+  color: #ffffff;
+  text-align: center;
+  margin-bottom: 14px;
+}
+
+.overlay-hint {
+  max-width: 100%;
+  font-size: 18px;
+  color: rgba(255, 255, 255, 0.85);
+  text-align: center;
+  margin-bottom: 20px;
+}
+
+.overlay-btn {
+  width: 170px;
+  padding-top: 12px;
+  padding-bottom: 12px;
+  border-radius: 30px;
+  justify-content: center;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.btn-primary {
+  background-color: #ffffff;
+}
+
+.btn-ghost {
+  border-width: 1px;
+  border-color: #ffffff;
+}
+
+.btn-text-dark {
+  font-size: 24px;
+  color: #333333;
+}
+
+.btn-text-light {
+  font-size: 24px;
+  color: #ffffff;
+}
+</style>

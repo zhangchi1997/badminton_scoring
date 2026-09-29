@@ -1,0 +1,31 @@
+{
+  "package": "com.miband.scoreboard",
+  "name": "羽球计分",
+  "versionName": "1.2.6",
+  "versionCode": 10,
+  "minPlatformVersion": 1200,
+  "icon": "/common/logo.png",
+  "simulationVersion": "default",
+  "deviceTypeList": [
+    "watch"
+  ],
+  "features": [
+    { "name": "system.vibrator" },
+    { "name": "system.brightness" }
+  ],
+  "config": {
+    "logLevel": "log",
+    "designWidth": 212
+  },
+  "display": {
+    "backgroundColor": "#000000"
+  },
+  "router": {
+    "entry": "pages/score",
+    "pages": {
+      "pages/score": {
+        "component": "score"
+      }
+    }
+  }
+}
