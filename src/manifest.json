@@ -1,8 +1,8 @@
 {
   "package": "com.miband.scoreboard",
   "name": "羽球计分",
-  "versionName": "1.2.6",
-  "versionCode": 10,
+  "versionName": "1.3.0",
+  "versionCode": 11,
   "minPlatformVersion": 1200,
   "icon": "/common/logo.png",
   "simulationVersion": "default",
@@ -11,7 +11,8 @@
   ],
   "features": [
     { "name": "system.vibrator" },
-    { "name": "system.brightness" }
+    { "name": "system.brightness" },
+    { "name": "system.sensor" }
   ],
   "config": {
     "logLevel": "log",

@@ -41,8 +41,10 @@
 <script>
 import { createTapHandler, adjustScore } from '../../common/tapScore'
 import { isGameWon } from '../../common/badminton'
+import { createWristRaiseDetector } from '../../common/wristRaise'
 import vibrator from '@system.vibrator'
 import brightness from '@system.brightness'
+import sensor from '@system.sensor'
 
 const AUTO_RESET_SECONDS = 10
 const DIM_DELAY_MS = 3000
@@ -83,11 +85,16 @@ export default {
         this._evaluate()
       }
     )
+
+    this._wristDetector = createWristRaiseDetector({
+      onRaise: () => this._onWristRaise()
+    })
   },
 
   onDestroy() {
     this._clearAutoReset()
     this._teardownBrightness()
+    this._wristDetector = null
   },
 
   onShow() {
@@ -214,6 +221,8 @@ export default {
       this._idleTimer = null
       this._dimmed = true
       this._applyBrightness(DIM_BRIGHTNESS)
+      // 调暗后开始监听加速度计，抬腕看分时立即恢复亮度
+      this._startWristWatch()
     }, DIM_DELAY_MS)
   },
 
@@ -227,6 +236,7 @@ export default {
   _restoreBrightness() {
     if (!this._dimmed) return
     this._dimmed = false
+    this._stopWristWatch()
     if (this._savedBrightness !== null) {
       this._applyBrightness(this._savedBrightness)
     }
@@ -243,6 +253,7 @@ export default {
   _teardownBrightness() {
     this._clearIdleDim()
     this._dimmed = false
+    this._stopWristWatch()
     try {
       brightness.setKeepScreenOn({ keepScreenOn: false })
       if (this._savedMode !== null) {
@@ -254,6 +265,44 @@ export default {
     } catch (error) {
       // 部分固件不支持亮度接口时静默忽略
     }
+  },
+
+  _startWristWatch() {
+    if (this._wristWatching || !this._wristDetector) return
+    this._wristDetector.reset()
+    try {
+      sensor.subscribeAccelerometer({
+        interval: 'ui',
+        callback: (result) => this._onAccelerometer(result)
+      })
+      this._wristWatching = true
+    } catch (error) {
+      // 部分固件不支持加速度计时静默忽略，退化为仅触摸恢复亮度
+    }
+  },
+
+  _stopWristWatch() {
+    if (!this._wristWatching) return
+    this._wristWatching = false
+    try {
+      sensor.unsubscribeAccelerometer()
+    } catch (error) {
+      // 部分固件不支持加速度计时静默忽略
+    }
+  },
+
+  _onAccelerometer(result) {
+    if (!result) return
+    const { x, y, z } = result
+    if (![x, y, z].every(Number.isFinite)) return
+    if (this._wristDetector) {
+      this._wristDetector.feed(x, y, z)
+    }
+  },
+
+  _onWristRaise() {
+    this._restoreBrightness()
+    this._armIdleDim()
   },
 
   _vibrate() {
